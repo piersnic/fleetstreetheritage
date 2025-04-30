@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>150 PDF Viewer</title>
+  <title>PDF Viewer</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
   <!-- Google Analytics (replace with your GA4 Measurement ID) -->
@@ -21,9 +21,16 @@
       height: 100%;
       width: 100%;
       background: #f0f0f0;
+      font-family: sans-serif;
+    }
+    .notice {
+      padding: 1em;
+      text-align: center;
+      background-color: #ffffff;
+      font-size: 1.2em;
     }
     .pdf-container {
-      height: 100vh;
+      height: calc(100vh - 60px); /* Leave space for notice */
       width: 100vw;
       overflow: hidden;
     }
@@ -35,6 +42,7 @@
   </style>
 </head>
 <body>
+  <div class="notice">This is the easy read file</div>
   <div class="pdf-container">
     <iframe src="150.pdf#zoom=fitH" title="PDF Document"></iframe>
   </div>
