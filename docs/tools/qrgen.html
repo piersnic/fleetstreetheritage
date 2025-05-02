@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Batch QR Code Generator & Validator</title>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jimp@0.22.10/browser/lib/jimp.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-reader@1.0.4/dist/index.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2em; }
+    textarea { width: 100%; height: 200px; margin-bottom: 1em; }
+    input[type="file"] { margin-bottom: 1em; }
+    button { padding: 0.6em 1.2em; font-size: 1em; }
+    table { border-collapse: collapse; width: 100%; margin-top: 2em; }
+    th, td { padding: 0.5em; border: 1px solid #ccc; text-align: left; }
+    .valid { color: green; font-weight: bold; }
+    .invalid { color: red; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<h1>Batch QR Code Generator & Validator</h1>
+
+<textarea id="textInput" placeholder="Enter one line per QR code..."></textarea>
+<br>
+<input type="file" id="fileInput" accept=".txt"><br><br>
+
+<button onclick="generateAndValidate()">Generate and Validate</button>
+
+<div id="results"></div>
+
+<script>
+function sanitizeFilename(input) {
+  return input
+    .replace(/^[\s.]+|[\s.]+$/g, '')
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+    .replace(/[\u0000-\u001F\u007F]/g, '-')
+    .replace(/ +/g, '_');
+}
+
+function getTimestamp() {
+  const now = new Date();
+  const pad = n => n.toString().padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
+function decodeQRCodeFromBuffer(buffer) {
+  return new Promise((resolve, reject) => {
+    window.Jimp.read(buffer)
+      .then(image => {
+        const qr = new window.QRCodeReader();
+        qr.callback = (err, value) => {
+          if (err || !value) reject(err || "No QR code found");
+          else resolve(value.result);
+        };
+        qr.decode(image.bitmap);
+      })
+      .catch(reject);
+  });
+}
+
+async function generateAndValidate() {
+  const textInput = document.getElementById("textInput").value.trim();
+  const fileInput = document.getElementById("fileInput");
+  const file = fileInput.files[0];
+  const resultsDiv = document.getElementById("results");
+  resultsDiv.innerHTML = "<p>Generating QR codes and validating, please wait...</p>";
+
+  let allText = textInput;
+  let fileNamePart = "";
+
+  if (file) {
+    const fileContent = await file.text();
+    allText += "\n" + fileContent;
+    fileNamePart = `_${sanitizeFilename(file.name)}`;
+  }
+
+  const timestamp = getTimestamp();
+  const baseName = `QR_codes_batch_${timestamp}${fileNamePart}`;
+  const lines = allText.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+  if (lines.length === 0) {
+    alert("Please provide some text input or select a file.");
+    return;
+  }
+
+  const zip = new JSZip();
+  const folder = zip.folder(baseName);
+  const usedFilenames = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    const originalText = lines[i];
+    const dataUrl = await QRCode.toDataURL(originalText);
+    let sanitized = sanitizeFilename(originalText);
+    if (!sanitized.toLowerCase().endsWith(".png")) {
+      sanitized += ".png";
+    }
+    let uniqueName = sanitized;
+    let counter = 1;
+    while (usedFilenames.has(uniqueName)) {
+      uniqueName = sanitized.replace(/(\.png)$/, `_${counter}$1`);
+      counter++;
+    }
+    usedFilenames.add(uniqueName);
+    const base64Data = dataUrl.split(',')[1];
+    folder.file(uniqueName, base64Data, { base64: true });
+  }
+
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+
+  // Now validate the in-memory zip
+  const zipBuffer = await zipBlob.arrayBuffer();
+  const zipLoaded = await JSZip.loadAsync(zipBuffer);
+  const batchSet = new Set(lines);
+  const table = document.createElement("table");
+  table.innerHTML = "<tr><th>Filename</th><th>Decoded Content</th><th>Validation</th></tr>";
+
+  const entries = [];
+  zipLoaded.forEach((relativePath, file) => {
+    if (file.name.toLowerCase().endsWith(".png")) {
+      entries.push(file);
+    }
+  });
+
+  for (const file of entries) {
+    try {
+      const buffer = await file.async("arraybuffer");
+      const decoded = await decodeQRCodeFromBuffer(buffer);
+      const baseName = file.name.split("/").pop().replace(/\.png$/i, '');
+      const expectedBase = sanitizeFilename(decoded).replace(/\.png$/i, '');
+      const nameMatches = baseName === expectedBase;
+      const batchMatches = batchSet.has(decoded);
+      const isValid = nameMatches && batchMatches;
+
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${file.name}</td>
+        <td>${decoded}</td>
+        <td class="${isValid ? "valid" : "invalid"}">${isValid ? "✓ Valid" : "✗ Invalid"}</td>
+      `;
+      table.appendChild(row);
+    } catch (err) {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${file.name}</td>
+        <td colspan="2" class="invalid">✗ Error reading QR: ${err}</td>
+      `;
+      table.appendChild(row);
+    }
+  }
+
+  resultsDiv.innerHTML = `<p>Generated ZIP: <strong>${baseName}.zip</strong></p>`;
+  resultsDiv.appendChild(table);
+
+  // Download the zip
+  saveAs(zipBlob, `${baseName}.zip`);
+}
+</script>
+
+</body>
+</html>
